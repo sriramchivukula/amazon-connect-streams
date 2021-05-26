@@ -13,6 +13,7 @@
   var ONE_DAY_MILLIS = 24 * 60 * 60 * 1000;
   var DEFAULT_POPUP_HEIGHT = 578;
   var DEFAULT_POPUP_WIDTH = 433;
+  var COPYABLE_EVENT_FIELDS = ["bubbles", "cancelBubble", "cancelable", "composed", "data", "defaultPrevented", "eventPhase", "isTrusted", "lastEventId", "origin", "returnValue", "timeStamp", "type"];
 
   /**
    * Unpollute sprintf functions from the global namespace.
@@ -248,6 +249,52 @@
     }
   };
 
+  connect.isValidLocale = function (locale) {
+    var languages = [
+      {
+        id: 'en_US',
+        label: 'English'
+      },
+      {
+        id: 'de_DE',
+        label: 'Deutsch'
+      },
+      {
+        id: 'es_ES',
+        label: 'Español'
+      },
+      {
+        id: 'fr_FR',
+        label: 'Français'
+      },
+      {
+        id: 'ja_JP',
+        label: '日本語'
+      },
+      {
+        id: 'it_IT',
+        label: 'Italiano'
+      },
+      {
+        id: 'ko_KR',
+        label: '한국어'
+      },
+      {
+        id: 'pt_BR',
+        label: 'Português'
+      },
+      {
+        id: 'zh_CN',
+        label: '中文(简体)'
+      },
+      {
+        id: 'zh_TW',
+        label: '中文(繁體)'
+      }
+    ];
+    return languages.map(function(language){ return language.id}).includes(locale);
+  }
+
   connect.getOperaBrowserVersion = function () {
     var versionOffset = userAgent.indexOf("Opera");
     var operaVersion = (userAgent.indexOf("Version") !== -1) ? userAgent.substring(versionOffset + 8) : userAgent.substring(versionOffset + 6);
@@ -329,6 +376,20 @@
     return JSON.parse(JSON.stringify(src));
   };
 
+  connect.deepcopyCrossOriginEvent = function(event) {
+    const obj = {};
+    const listOfAcceptableKeys = COPYABLE_EVENT_FIELDS;
+    listOfAcceptableKeys.forEach((key) => {
+      try {
+        obj[key] = event[key];
+      }
+      catch(e) {
+        connect.getLog().info("deepcopyCrossOriginEvent failed on key: ", key).sendInternalLogToServer();
+      }
+    });
+    return connect.deepcopy(obj);
+  }
+
   /**
    * Get the current base url of the open page, e.g. if the page is
    * https://example.com:9494/oranges, this will be "https://example.com:9494".
@@ -357,6 +418,10 @@
       return true;
     }
   };
+
+  connect.hasOtherConnectedCCPs = function () {
+    return connect.numberOfConnectedCCPs > 1;
+  }
 
   connect.fetch = function (endpoint, options, milliInterval, maxRetry) {
     maxRetry = maxRetry || 5;
@@ -611,4 +676,9 @@
     return error;
   }
 
+  // internal use only
+  connect.isCCP = function () {
+    var conduit = connect.core.getUpstream();
+    return conduit.name === 'ConnectSharedWorkerConduit';
+  }
 })();

@@ -11,12 +11,11 @@ To learn more about Amazon Connect and its capabilities, please check out
 the [Amazon Connect User Guide](https://docs.aws.amazon.com/connect/latest/userguide/).
 
 # Usage
-Run the Makefile to generate `amazon-connect-${version}.js`, then copy this file
-into your application or host it in an Amazon S3 bucket behind Amazon Cloudfront.
+amazon-connect-streams is available from [npmjs.com](https://www.npmjs.com/package/amazon-connect-streams). If you'd like to download it here, you can use either of the files like `release/connect-streams*`. 
 
-```
-$ make
-```
+Run `npm run release` to generate new release files. Full instructions for building locally with npm can be found [below](#build-your-own-with-npm). 
+
+We also support `make` for legacy builds.
 
 # Important Announcements
 1. December 2020 —  1.6.0 brings with it the release of a new Agent App API. In addition to the CCP, customers can now embed additional applications using connect.agentApp, including Customer Profiles and Wisdom (preview). See the [updated documentation](Documentation.md#initialization-for-ccp-customer-profiles-and-wisdom) for details on usage. We are also introducing a preview release for Amazon Connect Voice ID.
@@ -132,11 +131,11 @@ everything setup correctly and that you will be able to listen for events.
 <html>
   <head>
     <meta charset="UTF-8">
-    <script type="text/javascript" src="amazon-connect-1.4.js"></script>
+    <script type="text/javascript" src="connect-streams-min.js"></script>
   </head>
   <!-- Add the call to init() as an onload so it will only run once the page is loaded -->
   <body onload="init()">
-    <div id="container-div" style="width: 400px;height: 800px;"></div>
+    <div id="container-div" style="width: 400px; height: 800px;"></div>
     <script type="text/javascript">
       var containerDiv = document.getElementById("container-div");
       var instanceURL = "https://my-instance-domain.awsapps.com/connect/ccp-v2/";
@@ -146,7 +145,7 @@ everything setup correctly and that you will be able to listen for events.
         connect.core.initCCP(containerDiv, {
           ccpUrl: instanceURL,            // REQUIRED
           loginPopup: true,               // optional, defaults to `true`
-          loginPopupAutoClose: true,      // optional, defaults to `true`
+          loginPopupAutoClose: true,      // optional, defaults to `false`
           loginOptions: {                 // optional, if provided opens login in new window
             autoClose: true,              // optional, defaults to `false`
             height: 600,                  // optional, defaults to 578
@@ -155,16 +154,16 @@ everything setup correctly and that you will be able to listen for events.
             left: 0                       // optional, defaults to 0
           },
           region: "eu-central-1",         // REQUIRED for `CHAT`, optional otherwise
-          softphone: {                    // optional
-            allowFramedSoftphone: true,   // optional
-            disableRingtone: false,       // optional
-            ringtoneUrl: "./ringtone.mp3" // optional
-           },
-          pageOptions: { //optional
-            enableAudioDeviceSettings: false, //optional, defaults to 'false'
-            enablePhoneTypeSettings: true //optional, defaults to 'true' 
-           }  
-         });
+          softphone: {                    // optional, defaults below apply if not provided
+            allowFramedSoftphone: true,   // optional, defaults to false
+            disableRingtone: false,       // optional, defaults to false
+            ringtoneUrl: "./ringtone.mp3" // optional, defaults to CCP’s default ringtone if a falsy value is set
+          },
+          pageOptions: {                  // optional
+            enableAudioDeviceSettings: false, // optional, defaults to 'false'
+            enablePhoneTypeSettings: true // optional, defaults to 'true'
+          }
+        });
       }
     </script>
   </body>

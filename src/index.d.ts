@@ -130,6 +130,13 @@ declare namespace connect {
      * This method is only used when integrating with `amazon-connect-chatjs`.
      */
     getWebSocketManager(): any;
+
+    /**
+     * Subscribes a callback that executes when the CCP initialization is completed.
+     *
+     * @param callback A callback that will execute when the CCP initialization is completed.
+     */
+    onInitialized(callback: Function): void;
   }
 
   const core: Core;
@@ -869,6 +876,10 @@ declare namespace connect {
     readonly name: string;
   }
 
+  interface AgentPreferences {
+    readonly locale?: string;
+  }
+
   interface UserMediaDeviceChange {
     /** A value indicating the id of the media device. */
     readonly deviceId: string;
@@ -923,6 +934,8 @@ declare namespace connect {
   interface AgentConfiguration {
     /** See `agent.getAgentStates()` for more info. */
     readonly agentStates: AgentStateDefinition[];
+  
+    readonly agentPreferences?: AgentPreferences;
 
     /** See `agent.getDialableCountries()` for more info. */
     readonly dialableCountries: string[];

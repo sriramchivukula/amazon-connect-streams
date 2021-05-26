@@ -45,6 +45,7 @@
     'Default',
     'FailedConnectAgent',
     'FailedConnectCustomer',
+    'InvalidLocale',
     'LineEngagedAgent',
     'LineEngagedCustomer',
     'MissedCallAgent',
@@ -335,15 +336,15 @@
   };
 
   Agent.prototype.onSpeakerDeviceChanged = function(f){
-    connect.core.getUpstream().onUpstream(connect.AgentEvents.SPEAKER_DEVICE_CHANGED, f);
+    connect.core.getUpstream().onUpstream(connect.ConfigurationEvents.SPEAKER_DEVICE_CHANGED, f);
   }
 
   Agent.prototype.onMicrophoneDeviceChanged = function(f){
-    connect.core.getUpstream().onUpstream(connect.AgentEvents.MICROPHONE_DEVICE_CHANGED, f);
+    connect.core.getUpstream().onUpstream(connect.ConfigurationEvents.MICROPHONE_DEVICE_CHANGED, f);
   }
 
   Agent.prototype.onRingerDeviceChanged = function(f){
-    connect.core.getUpstream().onUpstream(connect.AgentEvents.RINGER_DEVICE_CHANGED, f);
+    connect.core.getUpstream().onUpstream(connect.ConfigurationEvents.RINGER_DEVICE_CHANGED, f);
   }
 
   Agent.prototype.mute = function () {
@@ -364,21 +365,21 @@
 
   Agent.prototype.setSpeakerDevice = function (deviceId) {
     connect.core.getUpstream().sendUpstream(connect.EventType.BROADCAST, {
-      event: connect.AgentEvents.SET_SPEAKER_DEVICE,
+      event: connect.ConfigurationEvents.SET_SPEAKER_DEVICE,
       data: { deviceId: deviceId }
     });
   };
 
   Agent.prototype.setMicrophoneDevice = function (deviceId) {
     connect.core.getUpstream().sendUpstream(connect.EventType.BROADCAST, {
-      event: connect.AgentEvents.SET_MICROPHONE_DEVICE,
+      event: connect.ConfigurationEvents.SET_MICROPHONE_DEVICE,
       data: { deviceId: deviceId }
     });
   };
 
   Agent.prototype.setRingerDevice = function (deviceId) {
     connect.core.getUpstream().sendUpstream(connect.EventType.BROADCAST, {
-      event: connect.AgentEvents.SET_RINGER_DEVICE,
+      event: connect.ConfigurationEvents.SET_RINGER_DEVICE,
       data: { deviceId: deviceId }
     });
   };
@@ -458,21 +459,27 @@
 
   Agent.prototype.setConfiguration = function (configuration, callbacks) {
     var client = connect.core.getClient();
-    client.call(connect.ClientMethods.UPDATE_AGENT_CONFIGURATION, {
-      configuration: connect.assertNotNull(configuration, 'configuration')
-    }, {
-        success: function (data) {
-          // We need to ask the shared worker to reload agent config
-          // once we change it so every tab has accurate config.
-          var conduit = connect.core.getUpstream();
-          conduit.sendUpstream(connect.EventType.RELOAD_AGENT_CONFIGURATION);
+    if (configuration && configuration.agentPreferences && !connect.isValidLocale(configuration.agentPreferences.locale)) {
+      if (callbacks && callbacks.failure) {
+        callbacks.failure(AgentErrorStates.INVALID_LOCALE);
+      }
+    } else {
+      client.call(connect.ClientMethods.UPDATE_AGENT_CONFIGURATION, {
+        configuration: connect.assertNotNull(configuration, 'configuration')
+      }, {
+          success: function (data) {
+            // We need to ask the shared worker to reload agent config
+            // once we change it so every tab has accurate config.
+            var conduit = connect.core.getUpstream();
+            conduit.sendUpstream(connect.EventType.RELOAD_AGENT_CONFIGURATION);
 
-          if (callbacks.success) {
-            callbacks.success(data);
-          }
-        },
-        failure: callbacks && callbacks.failure
+            if (callbacks.success) {
+              callbacks.success(data);
+            }
+          },
+          failure: callbacks && callbacks.failure
       });
+    }
   };
 
   Agent.prototype.setState = function (state, callbacks) {
@@ -802,10 +809,20 @@
             data: new connect.Contact(contactId)
           });
           conduit.sendUpstream(connect.EventType.BROADCAST, {
-            event: connect.core.getContactEventName(connect.ContactEvents.ACCEPTED,
-              self.getContactId()),
+            event: connect.core.getContactEventName(connect.ContactEvents.ACCEPTED, self.getContactId()),
             data: new connect.Contact(contactId)
           });
+
+          // In Firefox, there's a browser restriction that an unfocused browser tab is not allowed to access the user's microphone.
+          // The problem is that the restriction could cause a webrtc session creation timeout error when you get an incoming call while you are not on the primary tab.
+          // It was hard to workaround the issue especially when you have multiple tabs open because you needed to find the right tab and accept the contact before the timeout.
+          // To avoid the error, when multiple tabs are open in Firefox, a webrtc session is not immediately created as an incoming softphone contact is detected.
+          // Instead, it waits until contact.accept() is called on a tab and lets the tab become the new primary tab and start the web rtc session there
+          // because the tab should be focused at the moment and have access to the user's microphone.
+          var contact = new connect.Contact(contactId);
+          if (connect.isFirefoxBrowser() && contact.isSoftphoneCall()) {
+            connect.core.triggerReadyToStartSessionEvent();
+          }
 
           if (callbacks && callbacks.success) {
             callbacks.success(data);
@@ -1240,7 +1257,7 @@
                     data.AuthenticationResult.Decision = connect.ContactFlowAuthenticationDecision.NOT_AUTHENTICATED;
                     break;
                   case connect.VoiceIdAuthenticationDecision.SPEAKER_OPTED_OUT:
-                    data.AuthenticationResult.Decision = connect.ContactFlowAuthenticationDecision.OPT_OUT;
+                    data.AuthenticationResult.Decision = connect.ContactFlowAuthenticationDecision.OPTED_OUT;
                     break;
                   case connect.VoiceIdAuthenticationDecision.SPEAKER_NOT_ENROLLED:
                     data.AuthenticationResult.Decision = connect.ContactFlowAuthenticationDecision.NOT_ENROLLED;
@@ -1250,9 +1267,7 @@
                 }
                 resolve(data);
               } else {
-                setTimeout(function(){
-                  evaluate();
-                },milliInterval);
+                setTimeout(evaluate, milliInterval);
               }
             } else {
               connect.getLog().error("evaluateSpeaker timeout");
@@ -1273,65 +1288,74 @@
       if(!startNew){
         evaluate();
       } else {
-        self.startSession().then(function(data){
+        self.startSession().then(function(data) {
           evaluate();
         }).catch(function(err){
           reject(err)
-        })
+        });
       }
     });
   };
 
   VoiceId.prototype.describeSession = function () {
     var self = this;
-    self.checkConferenceCall();
     var client = connect.core.getClient();
     var contactData = connect.core.getAgentDataProvider().getContactData(this.contactId);
+    return new Promise(function (resolve, reject) {
+      client.call(connect.AgentAppClientMethods.DESCRIBE_VOICEID_SESSION, {
+        "SessionNameOrId": contactData.initialContactId || this.contactId
+      }, {
+        success: function (data) {
+          resolve(data)
+        },
+        failure: function (err) {
+          connect.getLog().error("describeSession failed")
+            .withObject({
+              err: err
+            });
+          var error = connect.VoiceIdError(connect.VoiceIdErrorTypes.DESCRIBE_SESSION_FAILED, "describeSession failed", err);
+          reject(error);
+        }
+      })
+    });
+  };
+
+  VoiceId.prototype.checkEnrollmentStatus = function () {
+    var self = this;
     var maxPollingTimes = 120; // It is polling for maximum 10 mins.
     var milliInterval = 5000;
+
     return new Promise(function (resolve, reject) {
-      function describe() {
-        client.call(connect.AgentAppClientMethods.DESCRIBE_VOICEID_SESSION, {
-          "SessionNameOrId": contactData.initialContactId || this.contactId
-        }, {
-          success: function (data) {
-            if(maxPollingTimes-- !== 1) {
-              if(data.Session.EnrollmentRequestDetails.Status === connect.VoiceIdEnrollmentRequestStatus.COMPLETED) {
+      function describe () {
+        if(maxPollingTimes-- !== 1) {
+          self.describeSession().then(function(data){
+            switch(data.Session.EnrollmentRequestDetails.Status) {
+              case connect.VoiceIdEnrollmentRequestStatus.COMPLETED:
                 resolve(data);
-              } else if(data.Session.EnrollmentRequestDetails.Status === connect.VoiceIdEnrollmentRequestStatus.IN_PROGRESS) {
-                setTimeout(function(){
-                  describe();
-                },milliInterval);
-              } else if(data.Session.EnrollmentRequestDetails.Status === connect.VoiceIdEnrollmentRequestStatus.NOT_ENOUGH_SPEECH) {
-                if(data.Session.StreamingStatus === connect.VoiceIdStreamingStatus.ENDED) {
-                  self.startSession().then(function(data){
+                break;
+              case connect.VoiceIdEnrollmentRequestStatus.IN_PROGRESS:
+                setTimeout(describe, milliInterval);
+                break;
+              case connect.VoiceIdEnrollmentRequestStatus.NOT_ENOUGH_SPEECH:
+                if(data.Session.StreamingStatus !== connect.VoiceIdStreamingStatus.ENDED) {
+                  setTimeout(describe,milliInterval);
+                } else {
+                  self.startSession().then(function(data) {
                     describe();
                   }).catch(function(err, data){
                     reject(err);
-                  })
-                } else {
-                  setTimeout(function(){
-                    describe();
-                  },milliInterval);
+                  });
                 }
-              } else {
+                break;
+              default:
                 reject(Error(data.Session.EnrollmentRequestDetails.Status));
-              }
-            } else {
-              connect.getLog().error("describeSession timeout");
-              var error = connect.VoiceIdError(connect.VoiceIdErrorTypes.TIMEOUT, "describeSession timeout");
-              reject(error);
             }
-          },
-          failure: function (err) {
-            connect.getLog().error("describeSession failed")
-              .withObject({
-                err: err
-              });
-            var error = connect.VoiceIdError(connect.VoiceIdErrorTypes.DESCRIBE_SESSION_FAILED, "describeSession failed", err);
-            reject(error);
-          }
-        })
+          });
+        } else {
+          connect.getLog().error("describeSession timeout");
+          var error = connect.VoiceIdError(connect.VoiceIdErrorTypes.TIMEOUT, "describeSession timeout");
+          reject(error);
+        }
       }
       describe();
     });
@@ -1350,7 +1374,7 @@
             if(data.Status === connect.VoiceIdEnrollmentRequestStatus.COMPLETED) {
               resolve(data);
             } else {
-              self.describeSession().then(function(data){
+              self.checkEnrollmentStatus().then(function(data){
                 resolve(data);
               }).catch(function(err){
                 reject(err);
@@ -1712,14 +1736,29 @@
   };
 
   /**
-   * Notify the shared worker that we are now the master for the given topic.
+   * Notify the shared worker and other CCP tabs that we are now the master for the given topic.
    */
-  connect.becomeMaster = function (topic) {
+  connect.becomeMaster = function (topic, successCallback, failureCallback) {
     connect.assertNotNull(topic, "A topic must be provided.");
-    var masterClient = connect.core.getMasterClient();
-    masterClient.call(connect.MasterMethods.BECOME_MASTER, {
-      topic: topic
-    });
+
+    if (!connect.core.masterClient) {
+      // We can't be the master because there is no master client!
+      connect.getLog().warn("We can't be the master for topic '%s' because there is no master client!", topic);
+      if (failureCallback) {
+        failureCallback();
+      }
+    } else {
+      var masterClient = connect.core.getMasterClient();
+      masterClient.call(connect.MasterMethods.BECOME_MASTER, {
+        topic: topic
+      }, {
+        success: function () {
+          if (successCallback) {
+            successCallback();
+          }
+        }
+      });
+    }
   };
 
   connect.Agent = Agent;

@@ -130,11 +130,11 @@ everything set up correctly and that you are able to listen for events.
 <html>
   <head>
     <meta charset="UTF-8">
-    <script type="text/javascript" src="amazon-connect-1.4.js"></script>
+    <script type="text/javascript" src="connect-streams-min.js"></script>
   </head>
   <!-- Add the call to init() as an onload so it will only run once the page is loaded -->
   <body onload="init()">
-    <div id="container-div" style="width: 400px;height: 800px;"></div>
+    <div id="container-div" style="width: 400px; height: 800px;"></div>
     <script type="text/javascript">
       var containerDiv = document.getElementById("container-div");
       var instanceURL = "https://my-instance-domain.awsapps.com/connect/ccp-v2/";
@@ -144,7 +144,7 @@ everything set up correctly and that you are able to listen for events.
         connect.core.initCCP(containerDiv, {
           ccpUrl: instanceURL,            // REQUIRED
           loginPopup: true,               // optional, defaults to `true`
-          loginPopupAutoClose: true,      // optional, defaults to `true`
+          loginPopupAutoClose: true,      // optional, defaults to `false`
           loginOptions: {                 // optional, if provided opens login in new window
             autoClose: true,              // optional, defaults to `false`
             height: 600,                  // optional, defaults to 578
@@ -153,16 +153,16 @@ everything set up correctly and that you are able to listen for events.
             left: 0                       // optional, defaults to 0
           },
           region: "eu-central-1",         // REQUIRED for `CHAT`, optional otherwise
-          softphone: {                    // optional
-            allowFramedSoftphone: true,   // optional
-            disableRingtone: false,       // optional
-            ringtoneUrl: "./ringtone.mp3" // optional
-           },
-           pageOptions: { //optional
-            enableAudioDeviceSettings: false //optional, defaults to 'false'
-            enablePhoneTypeSettings: true //optional, defaults to 'true' 
-           }       
-         });
+          softphone: {                    // optional, defaults below apply if not provided
+            allowFramedSoftphone: true,   // optional, defaults to false
+            disableRingtone: false,       // optional, defaults to false
+            ringtoneUrl: "./ringtone.mp3" // optional, defaults to CCP’s default ringtone if a falsy value is set
+          },
+          pageOptions: {                  // optional
+            enableAudioDeviceSettings: false, // optional, defaults to 'false'
+            enablePhoneTypeSettings: true // optional, defaults to 'true'
+          }
+        });
       }
     </script>
   </body>
@@ -237,7 +237,7 @@ this:
   rendered in an iframe.
 * If you are trying to use chat specific functionalities, please also include
   [ChatJS](https://github.com/amazon-connect/amazon-connect-chatjs) in your code.
-  We omit ChatJS from the Makefile so that streams can be used without ChatJS.
+  We omit ChatJS from the release file so that streams can be used without ChatJS.
   Streams only needs ChatJS when it is being used for chat. Note that when including ChatJS,
   it must be imported after StreamsJS, or there will be AWS SDK issues
   (ChatJS relies on the ConnectParticipant Service, which is not in the Streams AWS SDK).
@@ -291,6 +291,18 @@ connect.core.onAccessDenied(function() { /* ... */ });
 ```
 Subscribes a callback that starts whenever authorization fails (i.e. access denied).
 
+### `connect.core.onSoftphoneSessionInit()`
+```js
+connect.core.onSoftphoneSessionInit(function({ connectionId }) {
+  var softphoneManager = connect.core.getSoftphoneManager();
+  if(softphoneManager){
+    // access session
+    var session = softphoneManager.getSession(connectionId); 
+  }
+});
+```
+Subscribes a callback that starts whenever a new webrtc session is created. Used for handling the rtc session stats.
+
 ### `connect.core.getWebSocketManager()`
 ```js
 // `connect.ChatSession` is defined by `amazon-connect-chatjs`
@@ -302,6 +314,12 @@ connect.ChatSession.create({
 ```
 Gets the `WebSocket` manager. This method is only used when integrating with `amazon-connect-chatjs`.
 See the [amazon-connect-chatjs](https://github.com/amazon-connect/amazon-connect-chatjs) documentation for more information.
+
+### `connect.core.onInitialized()`
+```js
+connect.core.onInitialized(function() { /* ... */ });
+```
+Subscribes a callback that executes when the CCP initialization is completed.
 
 ## Event Subscription
 Event subscriptions link your app into the heartbeat of Amazon Connect by allowing your
@@ -414,13 +432,13 @@ Subscribe a method to be called when the agent is put into an error state specif
 The `error` argument is a `connect.SoftphoneError` instance with the following methods: `getErrorType()`, `getErrorMessage()`, `getEndPointUrl()`.
 
 ### `agent.onWebSocketConnectionLost()`
-```
+```js
 agent.onWebSocketConnectionLost(function(agent) { ... });
 ```
 Subscribe a method to be called when the agent is put into an error state specific to losing a WebSocket connection.
 
 ### `agent.onWebSocketConnectionGained()`
-```
+```js
 agent.onWebSocketConnectionGained(function(agent) { ... });
 ```
 Subscribe a method to be called when the agent gains a WebSocket connection.
@@ -1454,6 +1472,25 @@ An internal communication error occurred.
 ### `ERROR Default`
 All errors not otherwise defined.
 
+## Logging out
+In the default CCP UI, agent can log out by clicking on the "Logout" link on the Settings page. If you want to do something after an agent gets logged out, you can subscribe to the `EventType.TERMINATED` event.
+```js
+const eventBus = connect.core.getEventBus();
+eventBus.subscribe(connect.EventType.TERMINATED, () => {
+  console.log('Logged out');
+  // Do stuff...
+});
+```
+
+If you are using a custom UI, you can log out the agent by visiting the logout endpoint (`/connect/logout`). In this case, `EventType.TERMINATED` event won't be triggered. If you want the code above to work, you can manually trigger the `EventType.TERMINATE` event after logging out. When the event is triggered, `connect.core.terminate()` is internally called to clean up the Streams and the `EventType.TERMINATED` event will be triggered.
+```js
+fetch("https://<your-instance-domain>/connect/logout", { credentials: 'include'})
+  .then(() => {
+    const eventBus = connect.core.getEventBus();
+    eventBus.trigger(connect.EventType.TERMINATE);
+  });
+```
+In addition, it is recommended to remove the auth token cookies (`lily-auth-*`) after logging out, otherwise you’ll see AuthFail errors. ([Browser API Reference](https://developer.mozilla.org/en-US/docs/Mozilla/Add-ons/WebExtensions/API/cookies/remove)).
 ## Initialization for CCP, Customer Profiles, and Wisdom
 
 *Note that if you are only using CCP, please follow [these directions](#initialization)*
@@ -1518,6 +1555,8 @@ Use the following methods to integrate Voice ID into your existing agent web app
 Enroll a customer to Voice ID using a click of a button.
 ### `voiceConnection.evaluateSpeakerWithVoiceId()`
 Check the customer's Voice ID verification status.
+### `voiceConnection.evaluateSpeakerWithVoiceId(true)`
+Start a new audio stream to check the customer's Voice ID verification status.
 ### `voiceConnection.optOutVoiceIdSpeaker()`
  Opt out a customer from Voice ID.
 ### `voiceConnection.getVoiceIdSpeakerStatus()`

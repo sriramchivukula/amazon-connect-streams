@@ -7,6 +7,8 @@ var istanbul = require('gulp-istanbul'),
     jshint = require('gulp-jshint'),
     replace = require('gulp-replace'),
     pump = require('pump');
+    fs = require('fs');
+    path = require('path');
 
 var source = [ "src/aws-client.js",
     "src/sprintf.js",
